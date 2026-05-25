@@ -1,0 +1,65 @@
+name: Build, Push & Deploy Strapi
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    permissions:
+      contents: write
+      packages: write
+
+    steps:
+
+      # =========================
+      # 🔵 CI - BUILD IMAGE
+      # =========================
+
+      - name: Checkout Strapi repo
+        uses: actions/checkout@v4
+
+      - name: Set image variables
+        run: |
+          echo "IMAGE_NAME=ghcr.io/${{ github.repository_owner }}/strapi-cms" >> $GITHUB_ENV
+          echo "TAG=${GITHUB_SHA::7}" >> $GITHUB_ENV
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build & push image
+        run: |
+          docker build -t $IMAGE_NAME:$TAG .
+          docker push $IMAGE_NAME:$TAG
+
+      # =========================
+      # 🟢 CD - UPDATE INFRA REPO
+      # =========================
+
+      - name: Checkout infra repo
+        uses: actions/checkout@v4
+        with:
+          repository: marafis/marafis-infra
+          token: ${{ secrets.INFRA_TOKEN }}
+          path: infra
+
+      - name: Update Strapi deployment image
+        run: |
+          sed -i "s|image: .*strapi-cms:.*|image: $IMAGE_NAME:$TAG|g" infra/infra/strapi/deployment.yaml
+
+      - name: Commit & push infra changes
+        run: |
+          cd infra
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add infra/strapi/deployment.yaml
+          git diff --cached --quiet && echo "No changes" && exit 0
+          git commit -m "chore: update strapi image to $TAG"
+          git push origin HEAD
